@@ -2,16 +2,27 @@
 
 # Draw.io Reconstruction Skill
 
-**A Codex skill for reconstructing diagram images into editable Draw.io files.**
+**A Codex skill for reconstructing diagram images into editable Draw.io files, with examples intended for Codex + GPT-5.5 xhigh reproduction.**
 
 [![arXiv](https://img.shields.io/badge/arXiv-2605.15677-b31b1b)](https://arxiv.org/abs/2605.15677)
 [![Dataset](https://img.shields.io/badge/HuggingFace-VCG--Bench-yellow)](https://huggingface.co/datasets/sxy1620348809/VCG-Bench)
 
 </div>
 
-This repository contains a Codex skill and helper scripts for converting reference diagram images into editable `.drawio` files. It is the practical reconstruction workflow used in the VCG-Bench release examples: an agent inspects a reference image, creates a visible-element inventory, rebuilds text and structure with Draw.io primitives, uses crops or SVG where appropriate, exports a PNG preview, and verifies the result.
+This repository contains a Codex skill and helper scripts for converting reference diagram images into editable `.drawio` files. It is the practical reconstruction workflow used in the VCG-Bench release examples: an agent inspects a reference image, creates a visible-element inventory, rebuilds text and structure with Draw.io primitives, uses crops or SVG where appropriate, exports a PNG preview, and verifies the result. The bundled examples are packaged so others can reproduce them from the original PNG inputs using Codex + GPT-5.5 xhigh mode when available.
 
 The companion benchmark repository is released at https://github.com/sxy1499894281/VCG-Bench.
+
+## Reproduction Configuration
+
+The example reconstructions in this repository are intended to be reproduced with:
+
+- Runtime: Codex
+- Model/mode: GPT-5.5 xhigh
+- Input: the original PNG files in `examples/`
+- Output: editable `.drawio` files plus exported preview PNGs
+
+When reproducing, use `examples/<name>.png` as the source image and export the preview to a separate file such as `examples/<name>.preview.png` so the original input remains unchanged.
 
 ## What Is Included
 
@@ -24,12 +35,12 @@ The companion benchmark repository is released at https://github.com/sxy14998942
 | `scripts/export_drawio.py` | Export `.drawio` files to PNG using Draw.io Desktop/CLI. |
 | `scripts/crop_assist.py` | Assist with extracting image crops from complex reference diagrams. |
 | `agents/openai.yaml` | Example agent configuration metadata. |
-| `examples/` | Example reconstructed `.drawio` files. |
+| `examples/` | Original PNG inputs and example reconstructed `.drawio` files. |
 | `assets/` | README case images. |
 
 ## Reconstruction Cases
 
-The examples below show one-round Codex + skill reconstruction outputs. The left image is the original diagram, and the right image is the exported PNG from the reconstructed `.drawio` file.
+The examples below show one-round Codex + GPT-5.5 xhigh + skill reconstruction outputs. The left image is the original diagram, and the right image is the exported PNG from the reconstructed `.drawio` file.
 
 <table>
   <tr>
@@ -50,11 +61,14 @@ The examples below show one-round Codex + skill reconstruction outputs. The left
   </tr>
 </table>
 
-Example editable outputs are available at:
+Example source images and editable outputs are available at:
 
 ```text
+examples/data_lake.png
 examples/data_lake.drawio
+examples/data_man.png
 examples/data_man.drawio
+examples/data_sci2.png
 examples/data_sci2.drawio
 ```
 
@@ -115,7 +129,7 @@ python scripts/batch_verify.py path/to/output/drawio_batch_manifest.json
 Export a single `.drawio` file:
 
 ```bash
-python scripts/export_drawio.py examples/data_lake.drawio --output examples/data_lake.png
+python scripts/export_drawio.py examples/data_lake.drawio --output examples/data_lake.preview.png
 ```
 
 Check a `.drawio` file:
