@@ -2,25 +2,27 @@
 
 # Draw.io Reconstruction Skill
 
-**A Codex skill for reconstructing diagram images into editable Draw.io files, with examples intended for Codex + GPT-5.5 xhigh reproduction.**
+**A Codex skill for reconstructing diagram images into editable Draw.io files, with examples strongly recommended to be reproduced using Codex + GPT-5.5 xhigh.**
 
 [![arXiv](https://img.shields.io/badge/arXiv-2605.15677-b31b1b)](https://arxiv.org/abs/2605.15677)
 [![Dataset](https://img.shields.io/badge/HuggingFace-VCG--Bench-yellow)](https://huggingface.co/datasets/sxy1620348809/VCG-Bench)
 
 </div>
 
-This repository contains a Codex skill and helper scripts for converting reference diagram images into editable `.drawio` files. It is the practical reconstruction workflow used in the VCG-Bench release examples: an agent inspects a reference image, creates a visible-element inventory, rebuilds text and structure with Draw.io primitives, uses crops or SVG where appropriate, exports a PNG preview, and verifies the result. The bundled examples are packaged so others can reproduce them from the original PNG inputs using Codex + GPT-5.5 xhigh mode when available.
+This repository contains a Codex skill and helper scripts for converting reference diagram images into editable `.drawio` files. It is the practical reconstruction workflow used in the VCG-Bench release examples: an agent inspects a reference image, creates a visible-element inventory, rebuilds text and structure with Draw.io primitives, uses crops or SVG where appropriate, exports a PNG preview, and verifies the result. The bundled examples are packaged so others can reproduce them from the original PNG inputs. For faithful reproduction of the displayed examples, we strongly recommend using Codex + GPT-5.5 xhigh mode; weaker models or lower reasoning modes may not match the same visual fidelity.
 
 The companion benchmark repository is released at https://github.com/sxy1499894281/VCG-Bench.
 
-## Reproduction Configuration
+## Recommended Reproduction Configuration
 
-The example reconstructions in this repository are intended to be reproduced with:
+The example reconstructions in this repository are best reproduced with the following reference configuration:
 
 - Runtime: Codex
 - Model/mode: GPT-5.5 xhigh
 - Input: the original PNG files in `examples/`
 - Output: editable `.drawio` files plus exported preview PNGs
+
+This is the configuration we recommend for reproducing the README case images. Other runtimes, models, or lower reasoning settings can be used for experimentation, but they should not be treated as equivalent reproduction settings because they may miss small visual elements, drift in layout, or produce lower-fidelity Draw.io structure.
 
 When reproducing, use `examples/<name>.png` as the source image and export the preview to a separate file such as `examples/<name>.preview.png` so the original input remains unchanged.
 
