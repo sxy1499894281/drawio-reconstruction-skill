@@ -64,7 +64,7 @@ Copy or symlink this repository into your Codex skills directory:
 
 ```bash
 mkdir -p ~/.codex/skills
-ln -s /path/to/drawio-reconstruction ~/.codex/skills/drawio-reconstruction
+ln -s /path/to/drawio-reconstruction-skill ~/.codex/skills/drawio-reconstruction
 ```
 
 Then ask Codex to use `drawio-reconstruction` for a diagram image or a folder of images.
