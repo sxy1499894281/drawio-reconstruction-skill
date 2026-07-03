@@ -1,6 +1,6 @@
 ---
 name: drawio-reconstruction
-description: Reconstruct high-fidelity diagrams from one or more reference images into editable Draw.io files, using native Draw.io elements for text and structure, SVG only for simple icons that can match the reference shape and style, cropped/transparent PNG screenshots for complex or style-specific visuals, and background cleanup when crops need repair. Use when the user wants to turn a diagram image, slide image, research figure, architecture diagram, UI screenshot, GPT-image enhanced reference, or folder of diagram images into `.drawio` XML and rendered previews. For any request that includes or resolves to two or more images, use multi-agent parallel reconstruction by default.
+description: Reconstruct high-fidelity diagrams from one or more reference images into editable Draw.io files, using native Draw.io elements for text and structure, SVG only for simple icons that can match the reference shape and style, cropped/transparent PNG screenshots for complex or style-specific visuals, and background cleanup when crops need repair. Use when the user wants to turn a diagram image, slide image, research figure, architecture diagram, UI screenshot, GPT-image enhanced reference, or folder of diagram images into `.drawio` XML and rendered previews. For any request that includes or resolves to two or more images, detect batch intent first, create the manifest, then start one sub-agent per image before doing per-image reconstruction work.
 ---
 
 # Draw.io Reconstruction
@@ -26,11 +26,17 @@ Never silently rewrite the user's content. If the user asks for larger fonts or 
 
 Use this workflow when the user provides a directory of images or asks for batch reconstruction.
 
-Parallelism is the default for multi-image work. If the request names a folder, multiple image files, or any target that resolves to **2 or more images**, split work across multiple agents after creating the manifest. Do this even if the user does not explicitly say "parallel", "agents", or "batch". Only avoid or delay worker-agent parallelism when:
+### Batch Intent And Agent Gate
 
-- the user explicitly asks for sequential processing;
-- the available environment does not expose a multi-agent/subagent tool, in which case continue sequentially and report that limitation;
-- all diagrams must first match a shared approved style, in which case establish that style first and then parallelize the remaining images.
+Before opening images for detailed visual analysis, decide whether the request is a batch reconstruction task:
+
+- Treat the request as batch reconstruction when it names a folder, multiple image files, a glob/pattern, or any target that resolves to **2 or more image entries**.
+- For **2 or more image entries**, do not start one-by-one reconstruction or detailed per-image analysis in the parent agent. Create the manifest, then immediately start sub-agents.
+- Assign **one sub-agent per image** by default. Each sub-agent gets exactly one image and an exclusive write set for that image's `.drawio`, exported `.png`, audit file, and private asset/crop directory.
+- The parent agent may briefly inspect thumbnails or file metadata only to confirm scope, naming, orientation, and obvious shared style constraints. It must not reconstruct or deeply audit individual images before the sub-agent split.
+- If no multi-agent/subagent tool is available, report that limitation before continuing; do not silently fall back to serial reconstruction.
+
+Parallelism is mandatory for multi-image work when sub-agent tooling is available. If the request names a folder, multiple image files, or any target that resolves to **2 or more images**, split work across sub-agents after creating the manifest. Do this even if the user does not explicitly say "parallel", "agents", or "batch". The only fallback is an environment with no multi-agent/subagent tool; in that case, report the limitation before continuing.
 
 1. Identify the input directory, output directory, naming convention, and overwrite policy.
 2. Create a batch manifest:
@@ -40,12 +46,13 @@ Parallelism is the default for multi-image work. If the request names a folder, 
    ```
 
 3. Review the manifest before editing. Process only entries in the manifest unless the user expands scope.
-4. For each image, create `<stem>.drawio`, `<stem>.png`, and a lightweight `<stem>.audit.md` in the target output directory.
-5. When the manifest has **2 or more image entries**, split manifest entries into disjoint worker-agent work sets:
-   - Use one worker per image by default for small batches; for large batches, use practical chunks while keeping output ownership exclusive.
+4. For each image, define the expected `<stem>.drawio`, `<stem>.png`, and lightweight `<stem>.audit.md` outputs in the target output directory.
+5. When the manifest has **2 or more image entries**, immediately split manifest entries into disjoint worker-agent work sets before reconstruction begins:
+   - Start one worker per image.
    - Assign each worker exclusive output files.
    - Tell workers they are not alone in the codebase and must not revert or edit other workers' outputs.
-   - Give each worker this quality gate: produce `.drawio`, `.png`, and `<stem>.audit.md`; mark unresolved visual defects instead of claiming completion.
+   - Each worker must follow the same full workflow required for reconstructing that image as a standalone single-image task. Batch mode is only a scheduling strategy; it does not reduce fidelity, inventory, reconstruction, export, check, or visual-audit requirements.
+   - Give each worker this quality gate: produce `.drawio`, `.png`, and `<stem>.audit.md`; create the complete visible-element inventory; classify non-text visuals; use crops/SVG/native elements according to the normal medium rules; run required checks/exports; visually compare the exported preview against the reference; mark unresolved visual defects instead of claiming completion.
    - The parent agent owns final batch verification, visual inspection, audit review, and the user-facing completion report.
 6. After reconstruction, run batch verification:
 
