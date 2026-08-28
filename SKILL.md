@@ -1,11 +1,24 @@
 ---
 name: drawio-reconstruction
-description: Reconstruct high-fidelity diagrams from one or more reference images into editable Draw.io files, using native Draw.io elements for text and structure, SVG only for simple icons that can match the reference shape and style, and cropped/transparent PNGs for complex or style-specific visuals. Use when the user wants to turn a diagram image, slide image, research figure, architecture diagram, UI screenshot, or folder of images into `.drawio` XML and rendered previews. For each image with icons, use a clean Icon Producer and a different read-only Icon Reviewer before reconstruction continues. Use a Reconstruction Producer and a different read-only Reconstruction Reviewer for the complete exported diagram. For two or more images, create the batch manifest first, then start one reconstruction worker per image.
+description: Reconstruct high-fidelity diagrams from one or more reference images into editable Draw.io files, using native Draw.io elements for text and structure, SVG only for simple icons that can match the reference shape and style, and cropped/transparent PNGs for complex or style-specific visuals. Use when the user wants to turn a diagram image, slide image, research figure, architecture diagram, UI screenshot, or folder of images into `.drawio` XML and rendered previews. For each image with icons, use a clean Icon Producer and a different read-only Icon Reviewer before reconstruction continues. Use a Reconstruction Producer and a different read-only Reconstruction Reviewer for the complete exported diagram. For two or more images, create the batch manifest first, then queue per-image jobs within available agent slots. Also supports explicitly requested agent-assisted conversion of current Draw.io files to editable PPTX, either after all reconstruction reviews or as a later standalone request.
 ---
 
 # Draw.io Reconstruction
 
 Use this skill for high-quality reconstruction of diagram images into `.drawio` files.
+
+## Optional PPTX Output And Task Routing
+
+PPTX is opt-in per task, not a new default. If the user does not request it, or says "不要 PPT / 只要 Draw.io", follow the original reconstruction workflow below without adding a PPT question, presentation dependency, or conversion step. Mentioning "PPT style" or asking whether conversion is possible does not request an export.
+
+- **Reconstruct and export:** When the user says "还原后也要 PPT", "同时输出可编辑 PPT", or equivalent, record `pptx_requested: true` in the existing task plan/notes (and batch notes when applicable). Complete all original icon, reconstruction, repair, independent-review, and final visual-audit steps first. For a batch, wait for all requested reconstructions to finish their reviews. Then, before the final response, read [references/drawio-to-pptx.md](references/drawio-to-pptx.md) and convert the accepted current `.drawio` files. Carry this pending output through agent handoffs; the coordinator must not finish at Draw.io delivery alone. A later explicit "不要 PPT" cancels only the pending conversion.
+- **Convert later:** When the user asks "把刚才的 Draw.io 转成 PPT" or provides an existing `.drawio` for conversion, go directly to [references/drawio-to-pptx.md](references/drawio-to-pptx.md). Resolve the intended current file from the conversation; ask only if multiple candidates remain ambiguous. Do not reconstruct from the image again, regenerate icons, require a historic reconstruction audit, or rerun reconstruction agents just to convert an existing file.
+
+Conversion preserves the source `.drawio`, reference, icons, preview, and prior audit. Its PPTX verification is separate from the reconstruction acceptance gates below. Do not change the diagram design or weaken its review rules to make conversion easier. PPTX failure does not invalidate or overwrite completed reconstruction artifacts; report the conversion as incomplete and preserve them.
+
+When PPTX is requested, use the **PowerPoint/WPS compatibility profile by default**: native editable text/structure, independent high-resolution PNG pictures for SVG assets, correctly declared embedded fonts, and mandatory final-package checks. Read the compatibility section in [references/drawio-to-pptx.md](references/drawio-to-pptx.md) before authoring. This affects only PPTX, not Draw.io medium choices. Format/render checks do not establish application compatibility; record Microsoft PowerPoint and WPS test results separately and never claim an unperformed test.
+
+If the user cancels PPTX after conversion starts, stop further PPTX authoring/verification at a safe boundary and clear its pending-delivery state. Preserve existing files; do not delete or roll back Draw.io artifacts. Continue any reconstruction work that the user has not cancelled.
 
 ## Fidelity Contract
 
@@ -49,12 +62,20 @@ Use this workflow when the user provides a directory of images or asks for batch
 Before opening images for detailed visual analysis, decide whether the request is a batch reconstruction task:
 
 - Treat the request as batch reconstruction when it names a folder, multiple image files, a glob/pattern, or any target that resolves to **2 or more image entries**.
-- For **2 or more image entries**, do not start one-by-one reconstruction or detailed per-image analysis in the parent agent. Create the manifest, then immediately start sub-agents.
-- Assign **one sub-agent per image** by default. Each sub-agent gets exactly one image and an exclusive write set for that image's `.drawio`, exported `.png`, audit file, and private asset/crop directory.
+- For **2 or more image entries**, do not start one-by-one reconstruction or detailed per-image analysis in the parent agent. Create the manifest, read [references/batch-scheduling.md](references/batch-scheduling.md), then dispatch sub-agents within actual available capacity.
+- Create **one logical job per image**, not one simultaneously resident agent per image. Every worker assignment gets exactly one image and a role-scoped write set within that image's `.drawio`, exported `.png`, audit file, and private asset/crop directory; reviewers remain read-only.
 - The parent agent may briefly inspect thumbnails or file metadata only to confirm scope, naming, orientation, and obvious shared style constraints. It must not reconstruct or deeply audit individual images before the sub-agent split.
 - If no multi-agent/subagent tool is available, report that limitation before continuing; do not silently fall back to serial reconstruction.
 
-Parallelism is mandatory for multi-image work when sub-agent tooling is available. If the request names a folder, multiple image files, or any target that resolves to **2 or more images**, split work across sub-agents after creating the manifest. Do this even if the user does not explicitly say "parallel", "agents", or "batch". The only fallback is an environment with no multi-agent/subagent tool; in that case, report the limitation before continuing.
+Agent delegation is mandatory for multi-image work when sub-agent tooling is available, even if the user does not say "parallel", "agents", or "batch". Run eligible independent jobs in parallel up to the safe capacity; excess jobs wait in a queue and are admitted on a rolling basis. A low slot limit can require serial execution of fresh specialist agents, but never parent-only reconstruction or self-review. Report missing delegation tools or unavailable capacity; neither condition waives the quality gates.
+
+### Capacity And Quality Invariants
+
+- Count all agents that consume the actual runtime limit, including the parent when applicable, nested coordinators, specialists, and unrelated occupants. Do not hard-code a slot count or change global limits to fit the batch.
+- Prefer direct phase dispatch from the parent under tight capacity. If using resident per-image coordinators, reserve specialist capacity before admitting them and centrally authorize child launches; never fill every slot with coordinators waiting to spawn producers/reviewers.
+- Queue work on capacity exhaustion. Persist progress, wait for a relevant state change, and retry without cancelling active agents, reusing completed producer/reviewer identities, skipping reviews, or restarting accepted work.
+- Capacity affects concurrency and elapsed time, not fidelity: no smaller inventories, generic substitute icons, reduced resolution, omitted review sheets, fixed repair-round caps, or model/reasoning downgrades to fit more images.
+- Follow the detailed slot accounting, lifecycle, low-capacity fallback, rolling admission, and completion rules in [references/batch-scheduling.md](references/batch-scheduling.md). Explain the actual scheduling mode briefly to the user.
 
 1. Identify the input directory, output directory, naming convention, and overwrite policy.
 2. Create a batch manifest:
@@ -65,12 +86,12 @@ Parallelism is mandatory for multi-image work when sub-agent tooling is availabl
 
 3. Review the manifest before editing. Process only entries in the manifest unless the user expands scope.
 4. For each image, define the expected `<stem>.drawio`, `<stem>_preview.png`, and lightweight `<stem>.audit.md` outputs in the target output directory. The preview path must never equal the reference path.
-5. When the manifest has **2 or more image entries**, immediately split manifest entries into disjoint worker-agent work sets before reconstruction begins:
-   - Start one worker per image.
-   - Assign each worker exclusive output files.
+5. When the manifest has **2 or more image entries**, split entries into disjoint per-image jobs before reconstruction begins, then admit only capacity-safe worker assignments:
+   - Queue all entries in manifest order; start fresh role-specific agents for eligible phases as slots become available. A logical image job can span several sequential agent instances.
+   - Assign each producer exclusive output files; freeze the submitted files during independent read-only review.
    - Tell workers they are not alone in the codebase and must not revert or edit other workers' outputs.
-   - Each worker must follow the same full workflow required for reconstructing that image as a standalone single-image task, including both independently reviewed repair loops. Batch mode is only a scheduling strategy; it does not reduce fidelity, inventory, icon preparation, reconstruction, export, check, or visual-review requirements.
-   - Give each worker this quality contract: produce `.drawio`, `<stem>_preview.png`, and `<stem>.audit.md`; create the visible-element inventory; use one Icon Producer plus a fresh Icon Reviewer; reconstruct the diagram; create the placed-icon review sheet; and use a fresh Reconstruction Reviewer.
+   - Each image job must follow the same full workflow required for reconstructing that image as a standalone single-image task, including both independently reviewed repair loops. Batch mode is only a scheduling strategy; it does not reduce fidelity, inventory, icon preparation, reconstruction, export, check, or visual-review requirements.
+   - Give workers their role-scoped part of this quality contract: produce `.drawio`, `<stem>_preview.png`, and `<stem>.audit.md`; create the visible-element inventory; use one Icon Producer plus a fresh Icon Reviewer when icons exist; use a fresh Reconstruction Producer; create the placed-icon review sheets when applicable; and use a fresh Reconstruction Reviewer.
    - The parent aggregates results and may report additional defects, but it does not replace either independent reviewer. Any parent finding starts a fresh repair Producer on the current artifacts, followed by a new independent read-only Reviewer instance.
 6. After reconstruction, run batch verification:
 
@@ -423,3 +444,5 @@ Keep the final response short:
 - Link to the rendered `.png` preview.
 - Mention whether crops or SVG/native elements were used for major visual elements.
 - Mention any remaining manual review point, especially if visual audit items remain unresolved.
+
+If PPTX was requested, also deliver the verified `<stem>_editable.pptx` using the presentation workflow's output citation convention, and state which elements remain pictures. For conversion-only requests, deliver the PPTX and editability summary; do not imply that a new reconstruction or its independent review occurred. If conversion is blocked, deliver available requested Draw.io outputs and clearly identify the unfinished PPTX step.

@@ -1,4 +1,5 @@
 import argparse
+import base64
 import hashlib
 import importlib.util
 import json
@@ -7,7 +8,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.parse
 import xml.etree.ElementTree as ET
+import zipfile
+import zlib
 from pathlib import Path
 from unittest import mock
 
@@ -248,6 +252,172 @@ class SkillContractTests(unittest.TestCase):
             self.assertIn("Icon Producer", text)
             self.assertIn("Icon Reviewer", text)
             self.assertIn("placement-review*.png", text)
+
+
+class PptxHelperTests(unittest.TestCase):
+    def setUp(self):
+        self.inspect = load_module("inspect_pptx_source", "scripts/inspect_drawio_for_pptx.py")
+        self.verify = load_module("verify_pptx_native", "scripts/verify_drawio_pptx.py")
+
+    def source(self, directory, labels=("First", "Second")):
+        root = ET.Element("mxGraphModel", pageWidth="640", pageHeight="360")
+        cells = ET.SubElement(root, "root")
+        ET.SubElement(cells, "mxCell", id="0")
+        ET.SubElement(cells, "mxCell", id="1", parent="0")
+        panel = ET.SubElement(cells, "mxCell", id="panel", parent="1", vertex="1", style="rounded=1;fillColor=#FFFFFF;")
+        ET.SubElement(panel, "mxGeometry", x="10", y="10", width="620", height="340")
+        for index, label in enumerate(labels):
+            cell = ET.SubElement(cells, "mxCell", id=f"text-{index}", parent="1", vertex="1", value=label)
+            ET.SubElement(cell, "mxGeometry", x="20", y=str(30+index*30), width="300", height="30")
+        path = Path(directory) / "source.drawio"
+        path.write_bytes(ET.tostring(root))
+        return path
+
+    def package(self, directory, slide_labels, *, pictures_only=False, locked=False):
+        # Minimal OOXML parts for structural-check unit tests, not a rendered deck.
+        ns = self.verify.NS
+        p, a, r = (ns[key] for key in ("p", "a", "r"))
+        pres = ET.Element(f"{{{p}}}presentation")
+        ids = ET.SubElement(pres, f"{{{p}}}sldIdLst")
+        rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+        rels = ET.Element(f"{{{rel_ns}}}Relationships")
+        path = Path(directory) / "test.pptx"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("[Content_Types].xml",
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                '<Default Extension="xml" ContentType="application/xml"/>'
+                '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                '</Types>')
+            archive.writestr("_rels/.rels",
+                f'<Relationships xmlns="{rel_ns}"><Relationship Id="rId1" '
+                f'Type="{r}/officeDocument" Target="ppt/presentation.xml"/></Relationships>')
+            for index, labels in enumerate(slide_labels, 1):
+                ET.SubElement(ids, f"{{{p}}}sldId", {f"{{{r}}}id": f"rId{index}"})
+                ET.SubElement(rels, f"{{{rel_ns}}}Relationship", Id=f"rId{index}",
+                              Type=f"{r}/slide", Target=f"slides/slide{index}.xml")
+                slide = ET.Element(f"{{{p}}}sld")
+                tree = ET.SubElement(slide, f"{{{p}}}spTree")
+                if pictures_only:
+                    ET.SubElement(tree, f"{{{p}}}pic")
+                else:
+                    ET.SubElement(tree, f"{{{p}}}sp")  # Native panel.
+                    for label in labels:
+                        shape = ET.SubElement(tree, f"{{{p}}}sp")
+                        body = ET.SubElement(shape, f"{{{p}}}txBody")
+                        para = ET.SubElement(body, f"{{{a}}}p")
+                        for part_index, part in enumerate(label.split("\n")):
+                            if part_index:
+                                ET.SubElement(para, f"{{{a}}}br")
+                            run = ET.SubElement(para, f"{{{a}}}r")
+                            ET.SubElement(run, f"{{{a}}}t").text = part
+                        if locked:
+                            ET.SubElement(shape, f"{{{a}}}spLocks", noTextEdit="1")
+                archive.writestr(f"ppt/slides/slide{index}.xml", ET.tostring(slide))
+            archive.writestr("ppt/presentation.xml", ET.tostring(pres))
+            archive.writestr("ppt/_rels/presentation.xml.rels", ET.tostring(rels))
+        return path
+
+    def test_inventory_preserves_html_raw_style_and_plain_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory, ("x < y",))
+            graph = ET.fromstring(source.read_bytes())
+            cell = graph.find(".//mxCell[@id='text-0']")
+            cell.set("style", "html=1;fontSize=18;")
+            cell.set("value", '<div><b>中文 &amp; A</b><br/>B</div><div>C</div>')
+            source.write_bytes(ET.tostring(graph))
+            item = self.inspect.inventory(source)["pages"][0]["cells"][-1]
+            self.assertEqual(item["text"], "中文 & A\nB\nC")
+            self.assertEqual(item["value"], cell.get("value"))
+            self.assertEqual(item["geometry"]["x"], "20")
+            self.assertEqual(self.inspect.label_text("x < y", False), "x < y")
+
+    def test_inventory_compressed_multpage_and_unicode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory, ("中文标签",))
+            raw = source.read_bytes()
+            compressor = zlib.compressobj(wbits=-15)
+            encoded = urllib.parse.quote(raw.decode()).encode()
+            compressed = base64.b64encode(compressor.compress(encoded)+compressor.flush()).decode()
+            mxfile = ET.Element("mxfile")
+            first = ET.SubElement(mxfile, "diagram", id="first", name="原页")
+            first.append(ET.fromstring(raw))
+            ET.SubElement(mxfile, "diagram", id="second", name="压缩页").text = compressed
+            source.write_bytes(ET.tostring(mxfile))
+            result = self.inspect.inventory(source)
+            self.assertEqual([p["name"] for p in result["pages"]], ["原页", "压缩页"])
+            self.assertEqual(result["pages"][1]["cells"][-1]["text"], "中文标签")
+
+    def test_inventory_wrappers_hidden_parents_and_cycles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            graph = ET.fromstring(source.read_bytes())
+            cells = graph.find("root")
+            panel = cells.find("mxCell[@id='panel']")
+            panel.set("visible", "0")
+            wrapper = ET.SubElement(cells, "object", id="wrapped", label="Wrapped")
+            ET.SubElement(wrapper, "mxCell", vertex="1", parent="panel")
+            source.write_bytes(ET.tostring(graph))
+            item = self.inspect.inventory(source)["pages"][0]["cells"][-1]
+            self.assertEqual(item["id"], "wrapped")
+            self.assertEqual(item["text"], "Wrapped")
+            self.assertFalse(item["visible"])
+            panel.set("parent", "wrapped")
+            source.write_bytes(ET.tostring(graph))
+            with self.assertRaisesRegex(ValueError, "parent cycle"):
+                self.inspect.inventory(source)
+
+    def test_cli_refuses_overwriting_input_or_existing_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            before = source.read_bytes()
+            result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/inspect_drawio_for_pptx.py"), str(source), "--output", str(source)], capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(source.read_bytes(), before)
+            output = Path(directory) / "inventory.json"
+            output.write_text("KEEP")
+            result = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/inspect_drawio_for_pptx.py"), str(source), "--output", str(output)], capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(output.read_text(), "KEEP")
+
+    def test_verifier_accepts_native_text_and_line_breaks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory, ("Line one\nLine two",))
+            result = self.verify.verify(self.inspect.inventory(source), self.package(directory, [["Line one\nLine two"]]))
+            self.assertTrue(result["technical_checks_passed"], result)
+            self.assertTrue(result["visual_review_required"])
+
+    def test_verifier_rejects_missing_repeated_labels_and_flattening(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory, ("Same", "Same"))
+            data = self.inspect.inventory(source)
+            result = self.verify.verify(data, self.package(directory, [["Same"]]))
+            self.assertFalse(result["technical_checks_passed"])
+            self.assertEqual(result["slides"][0]["missing_labels"], {"Same": 1})
+            result = self.verify.verify(data, self.package(directory, [[]], pictures_only=True))
+            self.assertTrue(any("flattened" in error for error in result["errors"]))
+
+    def test_verifier_rejects_source_changes_locks_and_page_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            data = self.inspect.inventory(source)
+            pptx = self.package(directory, [["First", "Second"]], locked=True)
+            result = self.verify.verify(data, pptx)
+            self.assertTrue(any("lock" in error for error in result["errors"]))
+            source.write_bytes(source.read_bytes()+b"\n")
+            result = self.verify.verify(data, self.package(directory, [["First", "Second"], ["Extra"]]))
+            self.assertTrue(any("changed" in error for error in result["errors"]))
+            self.assertTrue(any("Slide count" in error for error in result["errors"]))
+
+    def test_verifier_enforces_compatibility_gate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source(directory)
+            pptx = self.package(directory, [["First", "Second"]])
+            with zipfile.ZipFile(pptx, "a") as archive:
+                archive.writestr("ppt/media/icon.svg", '<svg xmlns="http://www.w3.org/2000/svg"/>')
+            result = self.verify.verify(self.inspect.inventory(source), pptx)
+            self.assertFalse(result["technical_checks_passed"])
+            self.assertFalse(result["compatibility"]["checks_passed"])
+            self.assertTrue(any("SVG part retained" in e for e in result["errors"]))
 
 
 if __name__ == "__main__":

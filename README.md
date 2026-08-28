@@ -136,6 +136,8 @@ If Draw.io is not auto-detected, pass the executable path to scripts that suppor
 
 ## Batch Workflow
 
+Batch reconstruction uses one logical job per image and a bounded, rolling queue. Images beyond the available agent slots wait; as completed phase agents actually release capacity, the next eligible phase or image starts without waiting for a whole wave. Under tight limits the parent dispatches fresh role-specific agents directly, avoiding a full pool of coordinators waiting for child agents. Slot limits reduce throughput, not the required inventories, fidelity, or independent producer/reviewer repair loops. See [batch scheduling](references/batch-scheduling.md). The manifest helper records scope; the agent executes the scheduling protocol.
+
 Create a manifest for a folder of images:
 
 ```bash
@@ -211,3 +213,15 @@ If you use this skill or the companion benchmark in research, please cite VCG-Be
       url={https://arxiv.org/abs/2605.15677}, 
 }
 ```
+
+## Optional editable PowerPoint output
+
+PPTX export is opt-in; ordinary reconstruction and all independent review gates remain unchanged.
+
+- Request it upfront: “Reconstruct this image and also export an editable PPTX.” Conversion starts after all requested reconstructions and reviews finish.
+- Request it later: “Convert the Draw.io you just created to editable PPTX.” The agent uses the current file, including manual edits, without reconstructing again.
+- Say “No PPT, only Draw.io” to skip conversion; an unspecified preference also keeps the original output behavior.
+
+This is an agent-assisted XML-to-native-PPTX workflow, not a universal one-command converter. Text, supported shapes and lines become native objects; icon images remain independent pictures unless explicitly converted further. The source Draw.io is preserved. PPTX authoring requires the available presentations skill/runtime; unsupported details are reported instead of silently flattening the diagram. See [conversion workflow](references/drawio-to-pptx.md).
+
+Requested PPTX exports now use a PowerPoint/WPS compatibility profile by default: SVG picture assets become independent high-resolution transparent PNGs, embedded EOT fonts use the correct content type, and final-package compatibility checks are mandatory. This does not change Draw.io vector assets or flatten native text/structure. Format checks and actual Microsoft PowerPoint/WPS application tests are reported separately; untested software versions are not promised compatible.
